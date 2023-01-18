@@ -2206,7 +2206,17 @@ int rshim_access_check(rshim_backend_t *bd)
    * rshim device.
    */
   for (i = 0; i < 10; i++) {
-    rc = bd->read_rshim(bd, RSHIM_CHANNEL, bd->regs->fabric_dim, &value, RSHIM_REG_SIZE_8B);
+
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+    
+    for (int j = 0; j < 100000; ++j) 
+      rc = bd->read_rshim(bd, RSHIM_CHANNEL, bd->regs->fabric_dim, &value, RSHIM_REG_SIZE_8B);
+
+    gettimeofday(&end, NULL);
+    double time_taken = (end.tv_sec - start.tv_sec) * 1000000.0+ (end.tv_usec - start.tv_usec);
+
+    RSHIM_INFO("bd->read_rshim %ld %f\n", value, time_taken / 100000 * 1000);
     if (!rc && value && !RSHIM_BAD_CTRL_REG(value))
       break;
     usleep(100000);
@@ -2236,7 +2246,17 @@ int rshim_access_check(rshim_backend_t *bd)
   }
 
   /* Write value 0 to RSH_SCRATCHPAD1. */
-  rc = bd->write_rshim(bd, RSHIM_CHANNEL, bd->regs->scratchpad1, 0, RSHIM_REG_SIZE_8B);
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+  
+  for (int j = 0; j < 100000; ++j) 
+    rc = bd->write_rshim(bd, RSHIM_CHANNEL, bd->regs->scratchpad1, 0, RSHIM_REG_SIZE_8B);
+  
+  gettimeofday(&end, NULL);
+  double time_taken = (end.tv_sec - start.tv_sec) * 1000000.0+ (end.tv_usec - start.tv_usec);
+
+  RSHIM_INFO("bd->write_rshim %ld %f\n", value, time_taken / 100000 * 1000);
+
   if (rc < 0) {
     RSHIM_ERR("failed to write rshim rc=%d\n", rc);
     return -ENODEV;

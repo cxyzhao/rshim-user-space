@@ -395,12 +395,8 @@ static int rshim_pcie_mmap_direct(rshim_pcie_t *dev)
   snprintf(path, sizeof(path), "%s/%04x:%02x:%02x.%1u/resource0",
            SYS_BUS_PCI_PATH, dev->domain, dev->bus,
            dev->dev, dev->func);
-
-  dev->device_fd = open(path, O_RDWR | O_SYNC);
-  if (dev->device_fd < 0) {
-    RSHIM_ERR("Failed to open %s\n", path);
-    return -ENODEV;
-  }
+           
+  /* /sys/bus/pci/devices/0000:98:00.2/resource0 */
   dev->rshim_regs = mmap(NULL, dev->bar_size,
                          PROT_READ | PROT_WRITE,
                          MAP_SHARED | MAP_LOCKED,
