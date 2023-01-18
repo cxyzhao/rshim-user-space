@@ -2206,7 +2206,7 @@ int rshim_access_check(rshim_backend_t *bd)
    * rshim device.
    */
   for (i = 0; i < 10; i++) {
-
+    RSHIM_INFO("HERE");
     struct timeval start, end;
     gettimeofday(&start, NULL);
     
