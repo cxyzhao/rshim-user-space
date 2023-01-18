@@ -20,8 +20,11 @@
 #include <sys/timerfd.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/mman.h>
 
 #include "rshim.h"
+#include "rshim_regs.h"
 
 #define REVISION "19"
 
@@ -2206,7 +2209,6 @@ int rshim_access_check(rshim_backend_t *bd)
    * rshim device.
    */
   for (i = 0; i < 10; i++) {
-    RSHIM_INFO("HERE");
     struct timeval start, end;
     gettimeofday(&start, NULL);
     
@@ -2905,6 +2907,14 @@ static void print_help(void)
   printf("  -v, --version     version\n");
 }
 
+static inline uint64_t
+readq(const volatile void *addr)
+{
+  uint64_t value = *(const volatile uint64_t *)addr;
+  __sync_synchronize();
+  return value;
+}
+
 int main(int argc, char *argv[])
 {
   static const char short_options[] = "b:d:fhi:l:nv";
@@ -2968,6 +2978,36 @@ int main(int argc, char *argv[])
       return 0;
     }
   }
+
+
+  /* Test */
+  char path[] = "/sys/bus/pci/devices/0000:98:00.2/resource0";
+  int dev_fd = open(path,  O_RDWR | O_SYNC);
+  if(dev_fd < 0){
+    RSHIM_ERR("Failed to open %s\n", path);
+    return -ENODEV;
+  }else{
+    RSHIM_INFO("Successfully open %s\n", path);
+  }
+
+  volatile uint8_t *dev_regs = mmap(NULL, 0x100000,
+                         PROT_READ | PROT_WRITE,
+                         MAP_SHARED | MAP_LOCKED,
+                         dev_fd,
+                         0);
+  if (dev_regs == MAP_FAILED) {
+    RSHIM_ERR("Failed to map RShim registers\n");
+    return -ENOMEM;
+  }else{
+     RSHIM_INFO("Successfully map RShim registers\n");
+  }
+
+  // From rshim_pcie_read 
+  uint32_t chan = RSH_MMIO_ADDRESS_SPACE__CHANNEL_VAL_RSHIM;
+  uint32_t addr = RSH_UPTIME | (chan << 16);
+  uint64_t result = readq(dev_regs + addr);
+  printf("RSH_UPTIME %ld", result);
+  /* End of Test*/
 
   /* Put into daemon mode. */
   if (rshim_daemon_mode) {
