@@ -2979,9 +2979,8 @@ int main(int argc, char *argv[])
     }
   }
 
-
   /* Test */
-  char path[] = "/sys/bus/pci/devices/0000:98:00.2/resource0";
+  char path[] = "/sys/bus/pci/devices/0000:98:00.0/resource0";
   int dev_fd = open(path,  O_RDWR | O_SYNC);
   if(dev_fd < 0){
     RSHIM_ERR("Failed to open %s\n", path);
@@ -3005,8 +3004,30 @@ int main(int argc, char *argv[])
   // From rshim_pcie_read 
   uint32_t chan = RSH_MMIO_ADDRESS_SPACE__CHANNEL_VAL_RSHIM;
   uint32_t addr = RSH_UPTIME | (chan << 16);
-  uint64_t result = readq(dev_regs + addr);
+  uint64_t result;
+
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+  for (int j = 0; j < 100000; ++j) 
+    result = readq(dev_regs + addr);
+  gettimeofday(&end, NULL);
+  double time_taken = (end.tv_sec - start.tv_sec) * 1000000.0+ (end.tv_usec - start.tv_usec);
+  RSHIM_INFO("TEST Read Uptime %lu %.2fns\n", result, time_taken / 100000 * 1000);
+
   printf("RSH_UPTIME %ld", result);
+
+  int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
+  volatile uint8_t *mem_reg = mmap(NULL, 0x1000,
+                        PROT_READ | PROT_WRITE,
+                        MAP_SHARED | MAP_LOCKED,
+                        mem_fd ,
+                        0);
+  if(mem_fd < 0){
+    RSHIM_ERR("Failed to open mem_fd\n");
+    return -ENODEV;
+  }else{
+    RSHIM_INFO("Successfully open mem_fd\n");
+  }
   /* End of Test*/
 
   /* Put into daemon mode. */
