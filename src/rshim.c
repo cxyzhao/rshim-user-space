@@ -3024,25 +3024,51 @@ int main(int argc, char *argv[])
   printf("RSH_UPTIME %ld", result);
 
   /* On Host Side*/
-  uint32_t region0_addr = RSH_TM_HOST_TO_TILE_DATA  | (chan << 16);
-  writeq(123, dev_regs + region0_addr);
+  // uint32_t region0_addr = RSH_TM_HOST_TO_TILE_DATA  | (chan << 16);
+  // writeq(123, dev_regs + region0_addr);
 
 
   /* On BF2 Side*/
-  // int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
-  // volatile uint8_t *region0_reg = mmap(NULL, 0x18,
+  int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
+  if(mem_fd < 0){
+    RSHIM_ERR("Failed to open mem_fd\n");
+    return -ENODEV;
+  }else{
+    RSHIM_INFO("Successfully open mem_fd\n");
+  }
+  // const uint32_t mem_address = 0x00800a20;
+  // uint32_t alloc_mem_size=0x18, page_mask, page_size;
+  // page_size = sysconf(_SC_PAGESIZE);
+  // page_mask = (page_size - 1);
+  // volatile uint8_t *region0_reg = mmap(NULL, alloc_mem_size,
   //                       PROT_READ | PROT_WRITE,
   //                       MAP_SHARED | MAP_LOCKED,
   //                       mem_fd ,
   //                       0x00800a20);
-  // if(mem_fd < 0){
-  //   RSHIM_ERR("Failed to open mem_fd\n");
-  //   return -ENODEV;
-  // }else{
-  //   RSHIM_INFO("Successfully open mem_fd\n");
-  // }
-  // uint64_t result = readq(region0_reg);
-  // printf("Region0 %lu", result);
+  // result = readq(mem_pointer);
+
+  const uint32_t mem_address = 0x00800a20;
+  const uint32_t mem_size = 0x18;
+  uint32_t alloc_mem_size, page_mask, page_size;
+  void *mem_pointer, *virt_addr;
+  page_size = sysconf(_SC_PAGESIZE);
+  alloc_mem_size = (((mem_size / page_size) + 1) * page_size);
+  page_mask = (page_size - 1);
+  mem_pointer = mmap(NULL,
+                    alloc_mem_size,
+                    PROT_READ | PROT_WRITE,
+                    MAP_SHARED,
+                    mem_fd,
+                    (mem_address & ~page_mask)
+                    );
+  if(mem_pointer == MAP_FAILED)
+  {  
+    RSHIM_ERR("Failed to map region 0n");
+    return -ENODEV;
+  }
+  virt_addr = (mem_pointer + (mem_address & page_mask));
+  result = readq(virt_addr);
+  printf("Region0 %lu", result);
   /* End of Test*/
 
   /* Put into daemon mode. */
