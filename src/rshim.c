@@ -2915,6 +2915,13 @@ readq(const volatile void *addr)
   return value;
 }
 
+static inline void
+writeq(uint64_t value, volatile void *addr)
+{
+  __sync_synchronize();
+  *(volatile uint64_t *)addr = value;
+}
+
 int main(int argc, char *argv[])
 {
   static const char short_options[] = "b:d:fhi:l:nv";
@@ -3016,18 +3023,26 @@ int main(int argc, char *argv[])
 
   printf("RSH_UPTIME %ld", result);
 
-  int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
-  volatile uint8_t *mem_reg = mmap(NULL, 0x1000,
-                        PROT_READ | PROT_WRITE,
-                        MAP_SHARED | MAP_LOCKED,
-                        mem_fd ,
-                        0);
-  if(mem_fd < 0){
-    RSHIM_ERR("Failed to open mem_fd\n");
-    return -ENODEV;
-  }else{
-    RSHIM_INFO("Successfully open mem_fd\n");
-  }
+  /* On Host Side*/
+  uint32_t region0_addr = RSH_TM_HOST_TO_TILE_DATA  | (chan << 16);
+  writeq(123, dev_regs + region0_addr);
+
+
+  /* On BF2 Side*/
+  // int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
+  // volatile uint8_t *region0_reg = mmap(NULL, 0x18,
+  //                       PROT_READ | PROT_WRITE,
+  //                       MAP_SHARED | MAP_LOCKED,
+  //                       mem_fd ,
+  //                       0x00800a20);
+  // if(mem_fd < 0){
+  //   RSHIM_ERR("Failed to open mem_fd\n");
+  //   return -ENODEV;
+  // }else{
+  //   RSHIM_INFO("Successfully open mem_fd\n");
+  // }
+  // uint64_t result = readq(region0_reg);
+  // printf("Region0 %lu", result);
   /* End of Test*/
 
   /* Put into daemon mode. */
