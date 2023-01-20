@@ -2987,7 +2987,7 @@ int main(int argc, char *argv[])
   }
 
   /* Test */
-  char path[] = "/sys/bus/pci/devices/0000:98:00.0/resource0";
+  char path[] = "/sys/bus/pci/devices/0000:98:00.2/resource0";
   int dev_fd = open(path,  O_RDWR | O_SYNC);
   if(dev_fd < 0){
     RSHIM_ERR("Failed to open %s\n", path);
@@ -3023,13 +3023,17 @@ int main(int argc, char *argv[])
 
   printf("RSH_UPTIME %ld\n", result);
 
-  /* On Host Side*/
-  uint64_t value = htole64(123);
-  uint32_t region0_addr = RSH_TM_TILE_TO_HOST_DATA  | (chan << 16);
-  writeq(value, dev_regs + region0_addr);
+  // /* On Host Side*/
+  // while(1){
+    uint64_t value = htole64(520);
+    uint32_t region0_addr = RSH_TM_TILE_TO_HOST_DATA  | (chan << 16);
+    writeq(value, dev_regs + region0_addr);
+    *((unsigned long *) (dev_regs + region0_addr)) = value; 
 
-  uint32_t region1_addr = RSH_TM_HOST_TO_TILE_DATA  | (chan << 16);
-  writeq(value, dev_regs + region1_addr);
+    uint32_t region1_addr = RSH_TM_HOST_TO_TILE_DATA  | (chan << 16);
+    writeq(value, dev_regs + region1_addr);
+    *((unsigned long *) (dev_regs + region1_addr)) = value; 
+  // }
 
 
  /* On BF2 Side*/
@@ -3052,19 +3056,22 @@ int main(int argc, char *argv[])
   //                       0x00800a20);
   // result = readq(mem_pointer);
 
-  const off_t mem_address = 0x00800a40;
+#define MAP_SIZE 4096UL
+#define MAP_MASK (MAP_SIZE - 1)
+
+  const off_t mem_address = 0x00800a20;
   const size_t mem_size = 0x18;
   uint32_t alloc_mem_size, page_mask, page_size;
   void *mem_pointer, *virt_addr;
   page_size = sysconf(_SC_PAGESIZE);
   alloc_mem_size = (((mem_size / page_size) + 1) * page_size);
   page_mask = (page_size - 1);
-  mem_pointer = mmap(NULL,
-                    alloc_mem_size,
+  mem_pointer = mmap(0,
+                    MAP_SIZE,
                     PROT_READ | PROT_WRITE,
                     MAP_SHARED,
                     mem_fd,
-                    (mem_address & ~page_mask)
+                    (mem_address & ~MAP_MASK)
                     );
   if(mem_pointer == MAP_FAILED)
   {  
@@ -3073,12 +3080,23 @@ int main(int argc, char *argv[])
     
     return -ENODEV;
   }
-  virt_addr = (mem_pointer  + (mem_address & page_mask));
-  result = readq(virt_addr);
-  result = le64toh(result);
-  result =  *((unsigned short *) virt_addr;
-  result = 1;
-  printf("Region0 %lu %d %d\n", result, page_size, (mem_address & page_mask));
+  virt_addr = (mem_pointer  + (mem_address & MAP_MASK));
+  // *((unsigned long *) virt_addr) = 123;
+
+  writeq(456UL, virt_addr);
+  while(1){
+    //result = readq(virt_addr);
+    result = *((unsigned long *) virt_addr);
+    __sync_synchronize();
+
+    // result = le64toh(result);
+    // result =  *((unsigned long *) virt_addr);
+    if (result != 18446744073709551615UL)
+      printf("Value at address 0x%X (%p): 0x%X %lu\n", mem_address, virt_addr, result, result); 
+  }
+  printf("Region0 %lu %d %d %p\n", result, page_size, (mem_address & MAP_MASK), virt_addr);
+  for (int i = 0; i < mem_size; ++i)
+      printf("%02x \n", (int)((char*)virt_addr)[i]);
 
 
   // off_t offset = 0x00800a20;
@@ -3098,6 +3116,7 @@ int main(int argc, char *argv[])
   //   printf("%d \n", (int)mem[page_offset + i]);
   // result = readq(mem + page_offset + len);
   // printf("Region0 %lu \n", result);
+
 
   /* End of Test*/
 
