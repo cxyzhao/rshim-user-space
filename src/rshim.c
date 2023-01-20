@@ -3021,14 +3021,18 @@ int main(int argc, char *argv[])
   double time_taken = (end.tv_sec - start.tv_sec) * 1000000.0+ (end.tv_usec - start.tv_usec);
   RSHIM_INFO("TEST Read Uptime %lu %.2fns\n", result, time_taken / 100000 * 1000);
 
-  printf("RSH_UPTIME %ld", result);
+  printf("RSH_UPTIME %ld\n", result);
 
   /* On Host Side*/
-  // uint32_t region0_addr = RSH_TM_HOST_TO_TILE_DATA  | (chan << 16);
-  // writeq(123, dev_regs + region0_addr);
+  uint64_t value = htole64(123);
+  uint32_t region0_addr = RSH_TM_TILE_TO_HOST_DATA  | (chan << 16);
+  writeq(value, dev_regs + region0_addr);
+
+  uint32_t region1_addr = RSH_TM_HOST_TO_TILE_DATA  | (chan << 16);
+  writeq(value, dev_regs + region1_addr);
 
 
-  /* On BF2 Side*/
+ /* On BF2 Side*/
   int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
   if(mem_fd < 0){
     RSHIM_ERR("Failed to open mem_fd\n");
@@ -3036,6 +3040,7 @@ int main(int argc, char *argv[])
   }else{
     RSHIM_INFO("Successfully open mem_fd\n");
   }
+
   // const uint32_t mem_address = 0x00800a20;
   // uint32_t alloc_mem_size=0x18, page_mask, page_size;
   // page_size = sysconf(_SC_PAGESIZE);
@@ -3047,8 +3052,8 @@ int main(int argc, char *argv[])
   //                       0x00800a20);
   // result = readq(mem_pointer);
 
-  const uint32_t mem_address = 0x00800a20;
-  const uint32_t mem_size = 0x18;
+  const off_t mem_address = 0x00800a40;
+  const size_t mem_size = 0x18;
   uint32_t alloc_mem_size, page_mask, page_size;
   void *mem_pointer, *virt_addr;
   page_size = sysconf(_SC_PAGESIZE);
@@ -3063,12 +3068,37 @@ int main(int argc, char *argv[])
                     );
   if(mem_pointer == MAP_FAILED)
   {  
-    RSHIM_ERR("Failed to map region 0n");
+     perror("mmap failed");
+    RSHIM_ERR("Failed to map region 0 %d \n", page_size);
+    
     return -ENODEV;
   }
-  virt_addr = (mem_pointer + (mem_address & page_mask));
+  virt_addr = (mem_pointer  + (mem_address & page_mask));
   result = readq(virt_addr);
-  printf("Region0 %lu", result);
+  result = le64toh(result);
+  result =  *((unsigned short *) virt_addr;
+  result = 1;
+  printf("Region0 %lu %d %d\n", result, page_size, (mem_address & page_mask));
+
+
+  // off_t offset = 0x00800a20;
+  // size_t len = 0x18;
+  // size_t pagesize = sysconf(_SC_PAGE_SIZE);
+  // off_t page_base = (offset / pagesize) * pagesize;
+  // off_t page_offset = offset - page_base;
+
+  // int fd = open("/dev/mem", O_SYNC);
+  // unsigned char *mem = mmap(NULL, page_offset + len, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, page_base);
+  // if (mem == MAP_FAILED) {
+  //       perror("Can't map memory");
+  //       return -1;
+  // }
+  // size_t i;
+  // for (i = 0; i < len; ++i)
+  //   printf("%d \n", (int)mem[page_offset + i]);
+  // result = readq(mem + page_offset + len);
+  // printf("Region0 %lu \n", result);
+
   /* End of Test*/
 
   /* Put into daemon mode. */
