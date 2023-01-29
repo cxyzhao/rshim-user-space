@@ -546,6 +546,40 @@ static int wait_for_boot_done(rshim_backend_t *bd)
   return 0;
 }
 
+static inline uint64_t
+readq(const volatile void *addr)
+{
+  uint64_t value = *(const volatile uint64_t *)addr;
+  __sync_synchronize();
+  return value;
+}
+
+static inline void
+writeq(uint64_t value, volatile void *addr)
+{
+  __sync_synchronize();
+  *(volatile uint64_t *)addr = value;
+}
+
+static int reg_indirect_wait(uint8_t *dev_regs, uint64_t resp_count){
+  int rc, retries = 1000;
+  uint64_t count;
+
+  while (retries--) {
+    // rc = bd->read_rshim(bd, RSHIM_CHANNEL, bd->regs->mem_acc_rsp_cnt, &count, RSHIM_REG_SIZE_8B);
+    uint32_t chan = RSH_MMIO_ADDRESS_SPACE__CHANNEL_VAL_RSHIM;
+    uint32_t addr = RSH_MEM_ACC_RSP_CNT | (chan << 16);
+    count = readq(dev_regs + addr);
+    // if (rc)
+    //   return rc;
+    if (count != resp_count)
+      return 0;
+  }
+  RSHIM_DBG("Rshim byte access widget timeout\n");
+  return -1;
+
+}    
+
 static int rshim_reg_indirect_wait(rshim_backend_t *bd, uint64_t resp_count)
 {
   int rc, retries = 1000;
@@ -560,6 +594,44 @@ static int rshim_reg_indirect_wait(rshim_backend_t *bd, uint64_t resp_count)
   }
   RSHIM_DBG("Rshim byte access widget timeout\n");
   return -1;
+}
+
+static int mmio_write(uint8_t *dev_regs, uintptr_t pa,
+                                    uint8_t size, uint64_t data)
+{
+  uint64_t reg, resp_count;
+
+  // bd->read_rshim(bd, RSHIM_CHANNEL, bd->regs->device_mstr_priv_lvl, &reg, RSHIM_REG_SIZE_8B);
+  uint32_t chan = RSH_MMIO_ADDRESS_SPACE__CHANNEL_VAL_RSHIM;
+  uint32_t addr = RSH_DEVICE_MSTR_PRIV_LVL | (chan << 16);
+  reg = readq(dev_regs + addr);
+  reg |= 0x1ULL << RSH_DEVICE_MSTR_PRIV_LVL__MEM_ACC_LVL_SHIFT;
+
+  // bd->write_rshim(bd, RSHIM_CHANNEL, bd->regs->device_mstr_priv_lvl, reg, RSHIM_REG_SIZE_8B);
+  writeq(reg, dev_regs + addr);
+
+  // bd->read_rshim(bd, RSHIM_CHANNEL, bd->regs->mem_acc_rsp_cnt, &resp_count, RSHIM_REG_SIZE_8B);
+  addr = RSH_MEM_ACC_RSP_CNT | (chan << 16);
+  resp_count = readq(dev_regs + addr);
+
+  // bd->write_rshim(bd, RSHIM_CHANNEL, bd->regs->mem_acc_data_first_word, data, RSHIM_REG_SIZE_8B);
+  addr = RSH_MEM_ACC_DATA__FIRST_WORD | (chan << 16);
+  writeq(data, dev_regs + addr);
+
+  reg = (((uint64_t)pa & RSH_MEM_ACC_CTL__ADDRESS_RMASK) <<
+           RSH_MEM_ACC_CTL__ADDRESS_SHIFT) |
+        (((uint64_t)size & RSH_MEM_ACC_CTL__SIZE_RMASK) <<
+          RSH_MEM_ACC_CTL__SIZE_SHIFT) |
+        (1ULL << RSH_MEM_ACC_CTL__WRITE_SHIFT) |
+        (1ULL << RSH_MEM_ACC_CTL__SEND_SHIFT);
+
+  // bd->write_rshim(bd, RSHIM_CHANNEL, bd->regs->mem_acc_ctl, reg, RSHIM_REG_SIZE_8B);
+  addr = RSH_MEM_ACC_CTL | (chan << 16);
+  writeq(reg, dev_regs +addr);
+
+  // return rshim_reg_indirect_wait(bd, resp_count);
+  printf("start waiting\n");
+  return reg_indirect_wait(dev_regs, resp_count);
 }
 
 static int rshim_mmio_write_common(rshim_backend_t *bd, uintptr_t pa,
@@ -581,6 +653,45 @@ static int rshim_mmio_write_common(rshim_backend_t *bd, uintptr_t pa,
         (1ULL << RSH_MEM_ACC_CTL__SEND_SHIFT);
   bd->write_rshim(bd, RSHIM_CHANNEL, bd->regs->mem_acc_ctl, reg, RSHIM_REG_SIZE_8B);
   return rshim_reg_indirect_wait(bd, resp_count);
+}
+
+static int mmio_read(uint8_t *dev_regs, uintptr_t pa,
+                                    uint8_t size, uint64_t *data)
+{
+  uint64_t reg, resp_count;
+  
+  // bd->read_rshim(bd, RSHIM_CHANNEL, bd->regs->device_mstr_priv_lvl, &reg, RSHIM_REG_SIZE_8B);
+  uint32_t chan = RSH_MMIO_ADDRESS_SPACE__CHANNEL_VAL_RSHIM;
+  uint32_t addr = RSH_DEVICE_MSTR_PRIV_LVL | (chan << 16);
+  reg = readq(dev_regs + addr);
+  reg |= 0x1ULL << RSH_DEVICE_MSTR_PRIV_LVL__MEM_ACC_LVL_SHIFT;
+
+  //bd->write_rshim(bd, RSHIM_CHANNEL, bd->regs->device_mstr_priv_lvl, reg, RSHIM_REG_SIZE_8B);
+  writeq(reg, dev_regs + addr);
+
+  // bd->read_rshim(bd, RSHIM_CHANNEL, bd->regs->mem_acc_rsp_cnt, &resp_count, RSHIM_REG_SIZE_8B);
+  addr = RSH_MEM_ACC_RSP_CNT | (chan << 16);
+  resp_count = readq(dev_regs + addr);
+
+  reg = (((uint64_t)pa & RSH_MEM_ACC_CTL__ADDRESS_RMASK) <<
+           RSH_MEM_ACC_CTL__ADDRESS_SHIFT) |
+        (((uint64_t)size & RSH_MEM_ACC_CTL__SIZE_RMASK) <<
+          RSH_MEM_ACC_CTL__SIZE_SHIFT) |
+        (1ULL << RSH_MEM_ACC_CTL__SEND_SHIFT);
+
+  // bd->write_rshim(bd, RSHIM_CHANNEL, bd->regs->mem_acc_ctl, reg, RSHIM_REG_SIZE_8B);
+  addr = RSH_MEM_ACC_CTL | (chan << 16);
+  writeq(reg, addr);
+
+  if (reg_indirect_wait(dev_regs, resp_count))
+    return -1;
+
+  // bd->read_rshim(bd, RSHIM_CHANNEL, bd->regs->mem_acc_data_first_word, &reg, RSHIM_REG_SIZE_8B);
+  addr = RSH_MEM_ACC_DATA__FIRST_WORD | (chan << 16);
+  *data = readq(dev_regs + addr);
+
+  return 0;
+
 }
 
 static int rshim_mmio_read_common(rshim_backend_t *bd, uintptr_t pa,
@@ -2907,21 +3018,6 @@ static void print_help(void)
   printf("  -v, --version     version\n");
 }
 
-static inline uint64_t
-readq(const volatile void *addr)
-{
-  uint64_t value = *(const volatile uint64_t *)addr;
-  __sync_synchronize();
-  return value;
-}
-
-static inline void
-writeq(uint64_t value, volatile void *addr)
-{
-  __sync_synchronize();
-  *(volatile uint64_t *)addr = value;
-}
-
 int main(int argc, char *argv[])
 {
   static const char short_options[] = "b:d:fhi:l:nv";
@@ -2988,6 +3084,7 @@ int main(int argc, char *argv[])
 
   /* Test */
   char path[] = "/sys/bus/pci/devices/0000:98:00.2/resource0";
+  // char path[] = "/sys/bus/pci/devices/0000:98:00.0/resource0";
   int dev_fd = open(path,  O_RDWR | O_SYNC);
   if(dev_fd < 0){
     RSHIM_ERR("Failed to open %s\n", path);
@@ -3011,11 +3108,15 @@ int main(int argc, char *argv[])
   // From rshim_pcie_read 
   uint32_t chan = RSH_MMIO_ADDRESS_SPACE__CHANNEL_VAL_RSHIM;
   uint32_t addr = RSH_UPTIME | (chan << 16);
+  addr = 0;
   uint64_t result;
 
   struct timeval start, end;
+  writeq(456, dev_regs + addr);
+
+
   gettimeofday(&start, NULL);
-  for (int j = 0; j < 100000; ++j) 
+  for (int j = 0; j < 1; ++j) 
     result = readq(dev_regs + addr);
   gettimeofday(&end, NULL);
   double time_taken = (end.tv_sec - start.tv_sec) * 1000000.0+ (end.tv_usec - start.tv_usec);
@@ -3024,79 +3125,106 @@ int main(int argc, char *argv[])
   printf("RSH_UPTIME %ld\n", result);
 
   // /* On Host Side*/
-  // while(1){
-    uint64_t value = htole64(520);
-    uint32_t region0_addr = RSH_TM_TILE_TO_HOST_DATA  | (chan << 16);
-    writeq(value, dev_regs + region0_addr);
-    *((unsigned long *) (dev_regs + region0_addr)) = value; 
+  int count  = 1;
+  gettimeofday(&start, NULL);
+  for (int j = 0; j < count; ++j){
+    uint64_t value = htole64(520 + j);
+    // uint32_t region_addr = RSH_TM_HOST_TO_TILE_DATA  | (chan << 16);
+    // RSH_MEM_ACC_DATA__FIRST_WORD
+    // uint32_t region_addr = RSH_MEM_ACC_DATA__FIRST_WORD | (chan << 16);
+    // RSH_SCRATCHPAD6
+    // uint32_t region_addr = RSH_SCRATCHPAD1 | (chan << 16);
+    // writeq(value, dev_regs + region_addr + 0x4);
 
-    uint32_t region1_addr = RSH_TM_HOST_TO_TILE_DATA  | (chan << 16);
-    writeq(value, dev_regs + region1_addr);
-    *((unsigned long *) (dev_regs + region1_addr)) = value; 
-  // }
+
+
+
+  
+  // /* Calculate available size. */
+  // uint64_t word = readq(dev_regs + RSH_TM_HOST_TO_TILE_STS);
+  // int avail = RSH_TM_FIFO_SIZE - (int)(word & RSH_TM_HOST_TO_TILE_STS__COUNT_MASK) -
+  //         RSHIM_FIFO_SPACE_RESERV;
+  // printf("avail %d\n", avail);
+
+    // uint32_t region_addr = 0xa20| (chan << 16);
+    // for(int offset = 0; offset < 1; ++offset){
+    //   writeq(555, dev_regs + region_addr + offset * 8);
+    //    usleep(1);
+    //    writeq(556, dev_regs + region_addr + offset * 8);
+    //    usleep(1);
+    //     writeq(557, dev_regs + region_addr + offset * 8);
+    // }
+   
+
+    mmio_write(dev_regs, RSH_SCRATCHPAD1, RSHIM_REG_SIZE_8B, 456);
+  }
+  return;
+  gettimeofday(&end, NULL);
+  time_taken = (end.tv_sec - start.tv_sec) * 1000000.0 + (end.tv_usec - start.tv_usec);
+  RSHIM_INFO("TEST Write  %.2fns\n", result, time_taken / count * 1000);
 
 
  /* On BF2 Side*/
-  int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
-  if(mem_fd < 0){
-    RSHIM_ERR("Failed to open mem_fd\n");
-    return -ENODEV;
-  }else{
-    RSHIM_INFO("Successfully open mem_fd\n");
-  }
+//   int mem_fd = open("/dev/mem", O_RDWR | O_SYNC);
+//   if(mem_fd < 0){
+//     RSHIM_ERR("Failed to open mem_fd\n");
+//     return -ENODEV;
+//   }else{
+//     RSHIM_INFO("Successfully open mem_fd\n");
+//   }
 
-  // const uint32_t mem_address = 0x00800a20;
-  // uint32_t alloc_mem_size=0x18, page_mask, page_size;
-  // page_size = sysconf(_SC_PAGESIZE);
-  // page_mask = (page_size - 1);
-  // volatile uint8_t *region0_reg = mmap(NULL, alloc_mem_size,
-  //                       PROT_READ | PROT_WRITE,
-  //                       MAP_SHARED | MAP_LOCKED,
-  //                       mem_fd ,
-  //                       0x00800a20);
-  // result = readq(mem_pointer);
+//   // const uint32_t mem_address = 0x00800a20;Z
+//   // uint32_t alloc_mem_size=0x18, page_mask, page_size;
+//   // page_size = sysconf(_SC_PAGESIZE);
+//   // page_mask = (page_size - 1);
+//   // volatile uint8_t *region0_reg = mmap(NULL, alloc_mem_size,
+//   //                       PROT_READ | PROT_WRITE,
+//   //                       MAP_SHARED | MAP_LOCKED,
+//   //                       mem_fd ,
+//   //                       0x00800a20);
+//   // result = readq(mem_pointer);
 
-#define MAP_SIZE 4096UL
-#define MAP_MASK (MAP_SIZE - 1)
+// #define MAP_SIZE 4096UL
+// #define MAP_MASK (MAP_SIZE - 1)
 
-  const off_t mem_address = 0x00800a20;
-  const size_t mem_size = 0x18;
-  uint32_t alloc_mem_size, page_mask, page_size;
-  void *mem_pointer, *virt_addr;
-  page_size = sysconf(_SC_PAGESIZE);
-  alloc_mem_size = (((mem_size / page_size) + 1) * page_size);
-  page_mask = (page_size - 1);
-  mem_pointer = mmap(0,
-                    MAP_SIZE,
-                    PROT_READ | PROT_WRITE,
-                    MAP_SHARED,
-                    mem_fd,
-                    (mem_address & ~MAP_MASK)
-                    );
-  if(mem_pointer == MAP_FAILED)
-  {  
-     perror("mmap failed");
-    RSHIM_ERR("Failed to map region 0 %d \n", page_size);
+//   const off_t mem_address = 0x00800a20;
+//   const size_t mem_size = 0x18;
+//   uint32_t alloc_mem_size, page_mask, page_size;
+//   void *mem_pointer, *virt_addr;
+//   page_size = sysconf(_SC_PAGESIZE);
+//   alloc_mem_size = (((mem_size / page_size) + 1) * page_size);
+//   page_mask = (page_size - 1);
+//   mem_pointer = mmap(0,
+//                     MAP_SIZE,
+//                     PROT_READ | PROT_WRITE,
+//                     MAP_SHARED,
+//                     mem_fd,
+//                     (mem_address & ~MAP_MASK)
+//                     );
+//   if(mem_pointer == MAP_FAILED)
+//   {  
+//      perror("mmap failed");
+//     RSHIM_ERR("Failed to map region 0 %d \n", page_size);
     
-    return -ENODEV;
-  }
-  virt_addr = (mem_pointer  + (mem_address & MAP_MASK));
-  // *((unsigned long *) virt_addr) = 123;
+//     return -ENODEV;
+//   }
+//   virt_addr = (mem_pointer  + (mem_address & MAP_MASK));
+//   // *((unsigned long *) virt_addr) = 123;
 
-  writeq(456UL, virt_addr);
-  while(1){
-    //result = readq(virt_addr);
-    result = *((unsigned long *) virt_addr);
-    __sync_synchronize();
+//   writeq(456UL, virt_addr);
+//   while(1){
+//     //result = readq(virt_addr);
+//     result = *((unsigned long *) virt_addr);
+//     __sync_synchronize();
 
-    // result = le64toh(result);
-    // result =  *((unsigned long *) virt_addr);
-    if (result != 18446744073709551615UL)
-      printf("Value at address 0x%X (%p): 0x%X %lu\n", mem_address, virt_addr, result, result); 
-  }
-  printf("Region0 %lu %d %d %p\n", result, page_size, (mem_address & MAP_MASK), virt_addr);
-  for (int i = 0; i < mem_size; ++i)
-      printf("%02x \n", (int)((char*)virt_addr)[i]);
+//     // result = le64toh(result);
+//     // result =  *((unsigned long *) virt_addr);
+//     if (result != 18446744073709551615UL)
+//       printf("Value at address 0x%X (%p): 0x%X %lu\n", mem_address, virt_addr, result, result); 
+//   }
+//   printf("Region0 %lu %d %d %p\n", result, page_size, (mem_address & MAP_MASK), virt_addr);
+//   for (int i = 0; i < mem_size; ++i)
+//       printf("%02x \n", (int)((char*)virt_addr)[i]);
 
 
   // off_t offset = 0x00800a20;
